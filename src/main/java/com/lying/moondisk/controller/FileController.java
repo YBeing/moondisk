@@ -105,6 +105,7 @@ public class FileController {
      */
     @GetMapping("/downloadFile")
     public void downloadFile(String id, HttpServletRequest request, HttpServletResponse response)  {
+        LOGGER.info("download file start !!!");
         InputStream inputStream=null;
 
         DownloadFileModel downloadFileModel= fileService.downloadFile(id);
