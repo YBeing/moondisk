@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: moondisk
+  datasource:
+    driver-class-name: com.mysql.jdbc.Driver
+    username: root
+    password: root
+    url: jdbc:mysql://localhost:3306/lyingdisk?serverTimezone=GMT%2B8&useUnicode=true&characterEncoding=UTF-8&useSSL=false
+    type: com.alibaba.druid.pool.DruidDataSource
+  servlet:
+    multipart:
+      max-file-size: 500MB # 最大支持文件大小
+      max-request-size: 600MB # 最大支持请求大小
+
+
+server:
+  port: 8088
+  #配置访问路径
+  servlet:
+    context-path: /moondisk
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.lying.moondisk.bean
+logging:
+  level:
+    com.lying.lyingdisk.dao: debug
+# 分布式文件系统FDFS配置
+fdfs:
+  soTimeout: 30000 #socket连接超时时长
+  connectTimeout: 60000 #连接tracker服务器超时时长
+  reqHost: 121.196.29.156   #nginx访问地址
+  reqPort: 8888              #nginx访问端口
+  thumbImage: #缩略图生成参数，可选
+    width: 150
+    height: 150
+  trackerList: #TrackerList参数,支持多个，我这里只有一个，如果有多个在下方加- x.x.x.x:port
+    - 121.196.29.156:22122
