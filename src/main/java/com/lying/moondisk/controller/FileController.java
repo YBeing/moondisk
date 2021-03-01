@@ -209,7 +209,9 @@ public class FileController {
             }
             List<String> dirIdList  = fileInfoList.stream().filter(fileInfo ->  StrUtil.equals(fileInfo.getString("type"), "dir")).map(fileInfo -> fileInfo.getString("id")).collect(Collectors.toList());
             List<String> fileIdList = fileInfoList.stream().filter(fileInfo -> !StrUtil.equals(fileInfo.getString("type"), "dir")).map(fileInfo -> fileInfo.getString("id")).collect(Collectors.toList());
-            fileService.deleteFiles(fileIdList);
+            if (!fileService.deleteFiles(fileIdList)){
+                return new CommonResult(false, "文件删除失败，请检查文件路径！");
+            }
             fileDirService.deleteFileDir(dirIdList);
 
         } catch (Exception e) {
@@ -257,6 +259,24 @@ public class FileController {
         }
         List<AllFileModel> modelList = fileService.getImageGroupByDate(user.getUserId(), fileType);
         return  new CommonResult(true,"查询成功", modelList);
+    }
+
+    /**
+     * 根据文件id查询下载路径
+     * @param fileId
+     * @return
+     */
+    @GetMapping("/queryByFileId")
+    @ResponseBody
+    public CommonResult queryByFileId(Integer fileId){
+        if(fileId == null){
+            return new CommonResult(false, "文件ID信息不能为空！");
+        }
+        SysFile sysFile = sysFileMapper.selectByPrimaryKey(fileId);
+        if (sysFile == null || StrUtil.isEmpty(sysFile.getNginxViewPath())){
+            return new CommonResult(false, "查询文件信息失败，请检查文件是否上传成功！");
+        }
+        return new CommonResult(true, "查询成功", sysFile.getNginxViewPath());
     }
 
 }

@@ -178,6 +178,7 @@
     <foreach collection="list" open="(" close=")" separator="," item="item">
       #{item}
     </foreach>
+    and server_path is not  null
   </select>
   <delete id="deleteFilesByPid" parameterType="java.util.List">
     delete from sys_file where dir_pid in

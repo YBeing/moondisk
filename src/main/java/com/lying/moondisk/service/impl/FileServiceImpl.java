@@ -62,13 +62,18 @@ public class FileServiceImpl implements FileService {
     /**
      * filepath: group1/M00/00/00/wKgDMV9o4B-AHEQRAAcppDDlZRk814.png
      */
-    public void deleteFiles(List<String> ids) {
+    public Boolean deleteFiles(List<String> ids) {
         if (CollectionUtil.isEmpty(ids)) {
-            return;
+            return false;
         }
         List<String> serverPathList = sysFileMapper.getFilesByIds(ids);
+        //如果传入的file id和查询到的结果集数量不一致，则代表还有正在上传的文件未完成
+        if (CollectionUtil.isEmpty(serverPathList) || ids.size() != serverPathList.size()){
+            return false;
+        }
         fastDFSClientUtil.delFileList(serverPathList);
         sysFileMapper.deleteFiles(ids);
+        return true;
 
 
     }

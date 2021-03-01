@@ -25,7 +25,7 @@ public interface FileService {
     /**
      * 删除文件
      */
-    void deleteFiles(List<String> ids);
+    Boolean deleteFiles(List<String> ids);
 
     /**
      * 根据文件夹删除下面的子文件夹
