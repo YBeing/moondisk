@@ -16,19 +16,20 @@ import com.lying.moondisk.service.FileDirService;
 import com.lying.moondisk.service.FileService;
 import com.lying.moondisk.service.UserService;
 import com.lying.moondisk.util.FastDFSClientUtil;
-import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Controller;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import javax.servlet.ServletOutputStream;
-import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.BufferedInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -57,9 +58,16 @@ public class FileController {
             30000, TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>());
     /**
      * 文件上传
+     * 重试参数：
+     * maxAttempts：重试次数
+     * delay      ：重试间隔
+     * multiplier ：重试间隔时间的倍数
+     * maxDelay   ：最大间隔时间
      */
     @PostMapping("/upload")
     @ResponseBody
+    @Transactional
+    @Retryable(value = Exception.class ,maxAttempts = 5, backoff = @Backoff(delay = 1000, multiplier = 1, maxDelay = 0))
     public CommonResult uploadFile(MultipartFile file, String username, Long dirPid) throws IOException {
         LOGGER.info("file upload start, filename is {}, username is {}", file.getOriginalFilename(), username);
         SysUser user = userService.queryByName(username);
@@ -80,7 +88,7 @@ public class FileController {
             executorService.submit(()->{
                 //由于是并发执行，不想阻塞最开始的插入操作，是前台能够更快响应，所以先执行基础数据的插入，
                 //待文件上传完成后，再把相关的信息更新到响应的数据里面去
-                //todo:还应该加入重试机制，避免文件过大导致的服务器压力过大，从而引起的上传失败，所以这里应该在抛出异常时进行重试
+                //fixme:还应该加入重试机制，避免文件过大导致的服务器压力过大，从而引起的上传失败，所以这里应该在抛出异常时进行重试
                 Map pathInfoMap = null;
                 try {
                     pathInfoMap = fastDFSClientUtil.uploadFile(file);
@@ -90,10 +98,12 @@ public class FileController {
                     sysFileMapper.updateByPrimaryKeySelective(sysFile);
                 } catch (IOException e) {
                     LOGGER.error("请检查文件类型或者文件大小是否符合要求！");
+                    throw new RuntimeException("请检查文件类型或者文件大小是否符合要求");
                 }
             });
         } catch (Exception e) {
             LOGGER.error("upload failed, message is {}", e.getMessage());
+            throw new RuntimeException("upload failed, message is "+ e.getMessage());
         }
 
         //重新查询新增后的页面信息，用于前台展示
@@ -104,38 +114,50 @@ public class FileController {
      * 文件下载
      */
     @GetMapping("/downloadFile")
-    public void downloadFile(String id, HttpServletRequest request, HttpServletResponse response)  {
-        LOGGER.info("download file start !!!");
-        InputStream inputStream=null;
-
+    public synchronized CommonResult  downloadFile(HttpServletResponse response, String id) {
         DownloadFileModel downloadFileModel= fileService.downloadFile(id);
-        String fileName = downloadFileModel.getFileName();
-        inputStream = downloadFileModel.getInputStream();
-        String contentType = request.getServletContext().getMimeType(fileName);
-        String contentDisposition = "attachment;filename=" + fileName;
-
-        // 设置头
-        response.setHeader("Content-Type",contentType);
-        response.setHeader("Content-Disposition",contentDisposition);
-
+        response.setHeader("content-type", "image/jpg");
+        response.setContentType("application/octet-stream");
+        response.setHeader("Content-Disposition", "attachment; filename=" + downloadFileModel.getFileName());
+        byte[] buff = new byte[10240000];
+        BufferedInputStream bis = null;
+        OutputStream outputStream = null;
         try {
-            // 获取绑定了客户端的流
-            ServletOutputStream output = response.getOutputStream();
-            // 把输入流中的数据写入到输出流中
-            IOUtils.copy(inputStream,output);
-        } catch (IOException e) {
+            outputStream = response.getOutputStream();
+
+            //这个路径为待下载文件的路径
+            bis = new BufferedInputStream(downloadFileModel.getInputStream());
+            int read = bis.read(buff);
+
+            //通过while循环写入到指定了的文件夹中
+            while (read != -1) {
+                outputStream.write(buff, 0, buff.length);
+                outputStream.flush();
+                read = bis.read(buff);
+            }
+        } catch ( IOException e ) {
             e.printStackTrace();
+            //出现异常返回给页面失败的信息
+            return new CommonResult(false, "download fail");
         } finally {
-            if (inputStream !=null ){
+            if (bis != null) {
                 try {
-                    inputStream.close();
-
+                    bis.close();
                 } catch (IOException e) {
-
+                    e.printStackTrace();
                 }
-
+            }
+            if (outputStream != null) {
+                try {
+                    outputStream.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
+
+        return new CommonResult(true, "下载成功");
+
     }
 
     /**
@@ -209,10 +231,14 @@ public class FileController {
             }
             List<String> dirIdList  = fileInfoList.stream().filter(fileInfo ->  StrUtil.equals(fileInfo.getString("type"), "dir")).map(fileInfo -> fileInfo.getString("id")).collect(Collectors.toList());
             List<String> fileIdList = fileInfoList.stream().filter(fileInfo -> !StrUtil.equals(fileInfo.getString("type"), "dir")).map(fileInfo -> fileInfo.getString("id")).collect(Collectors.toList());
-            if (!fileService.deleteFiles(fileIdList)){
-                return new CommonResult(false, "文件删除失败，请检查文件路径！");
+            if (CollectionUtil.isNotEmpty(fileIdList)){
+                if (!fileService.deleteFiles(fileIdList)){
+                    return new CommonResult(false, "文件删除失败，请检查文件路径！");
+                }
             }
-            fileDirService.deleteFileDir(dirIdList);
+            if (CollectionUtil.isNotEmpty(dirIdList)){
+                fileDirService.deleteFileDir(dirIdList);
+            }
 
         } catch (Exception e) {
             LOGGER.error("delete file err, message is {}", e.getMessage());
